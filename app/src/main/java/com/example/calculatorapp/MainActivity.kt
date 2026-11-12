@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -34,7 +35,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainCalculatorView() {
-    var currentDisplayValue by remember { mutableStateOf("") }
+    var currentDisplayValue by rememberSaveable { mutableStateOf("") }
 
     val screenConfig = LocalConfiguration.current
     val isLandscapeView = screenConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -55,14 +56,46 @@ fun MainCalculatorView() {
     val handleKeyPress: (String) -> Unit = { key ->
         when (key) {
             "C" -> currentDisplayValue = ""
-            "⌫" -> if (currentDisplayValue.isNotEmpty()) currentDisplayValue = currentDisplayValue.substring(0, currentDisplayValue.length - 1)
-            "sin" -> currentDisplayValue += "sin("
-            "cos" -> currentDisplayValue += "cos("
-            "tan" -> currentDisplayValue += "tan("
-            "√" -> currentDisplayValue += "√("
-            "x^y" -> currentDisplayValue += "^"
-            "ln" -> currentDisplayValue += "ln("
-            else -> currentDisplayValue += key
+            "⌫" -> {
+                if (currentDisplayValue.isNotEmpty() && currentDisplayValue != "Błąd") {
+                    currentDisplayValue = currentDisplayValue.substring(0, currentDisplayValue.length - 1)
+                } else if (currentDisplayValue == "Błąd") {
+                    currentDisplayValue = ""
+                }
+            }
+            "=" -> {
+                if (currentDisplayValue.isNotEmpty()) {
+                    currentDisplayValue = evaluateMathExpression(currentDisplayValue)
+                }
+            }
+            "sin" -> {
+                if (currentDisplayValue == "Błąd") currentDisplayValue = ""
+                currentDisplayValue += "sin("
+            }
+            "cos" -> {
+                if (currentDisplayValue == "Błąd") currentDisplayValue = ""
+                currentDisplayValue += "cos("
+            }
+            "tan" -> {
+                if (currentDisplayValue == "Błąd") currentDisplayValue = ""
+                currentDisplayValue += "tan("
+            }
+            "√" -> {
+                if (currentDisplayValue == "Błąd") currentDisplayValue = ""
+                currentDisplayValue += "√("
+            }
+            "x^y" -> {
+                if (currentDisplayValue == "Błąd") currentDisplayValue = ""
+                currentDisplayValue += "^"
+            }
+            "ln" -> {
+                if (currentDisplayValue == "Błąd") currentDisplayValue = ""
+                currentDisplayValue += "ln("
+            }
+            else -> {
+                if (currentDisplayValue == "Błąd") currentDisplayValue = ""
+                currentDisplayValue += key
+            }
         }
     }
 
@@ -172,5 +205,126 @@ fun KeypadGrid(
                 }
             }
         }
+    }
+}
+
+fun evaluateMathExpression(expression: String): String {
+    return try {
+        val sanitized = expression
+            .replace("×", "*")
+            .replace("÷", "/")
+            .replace("π", Math.PI.toString())
+            .replace("e", Math.E.toString())
+            .replace("√", "sqrt")
+
+        val parser = SimpleExpressionParser(sanitized)
+        val result = parser.parse()
+
+        if (result.isNaN() || result.isInfinite()) {
+            "Błąd"
+        } else {
+            if (result == result.toLong().toDouble()) {
+                result.toLong().toString()
+            } else {
+                String.format(java.util.Locale.US, "%.6f", result).trimEnd('0').trimEnd('.')
+            }
+        }
+    } catch (e: Exception) {
+        "Błąd"
+    }
+}
+
+class SimpleExpressionParser(private val input: String) {
+    private var pos = -1
+    private var ch = 0
+
+    private fun nextChar() {
+        ch = if (++pos < input.length) input[pos].toInt() else -1
+    }
+
+    private fun eat(charToEat: Int): Boolean {
+        while (ch == ' '.toInt()) nextChar()
+        if (ch == charToEat) {
+            nextChar()
+            return true
+        }
+        return false
+    }
+
+    fun parse(): Double {
+        nextChar()
+        val x = parseExpression()
+        if (pos < input.length) throw RuntimeException("Błąd składni")
+        return x
+    }
+
+    private fun parseExpression(): Double {
+        var x = parseTerm()
+        while (true) {
+            when {
+                eat('+'.toInt()) -> x += parseTerm()
+                eat('-'.toInt()) -> x -= parseTerm()
+                else -> return x
+            }
+        }
+    }
+
+    private fun parseTerm(): Double {
+        var x = parseFactor()
+        while (true) {
+            when {
+                eat('*'.toInt()) -> x *= parseFactor()
+                eat('/'.toInt()) -> {
+                    val divisor = parseFactor()
+                    if (divisor == 0.0) throw ArithmeticException("Dzielenie przez zero")
+                    x /= divisor
+                }
+                else -> return x
+            }
+        }
+    }
+
+    private fun parseFactor(): Double {
+        var x = parseBase()
+        if (eat('^'.toInt())) {
+            x = Math.pow(x, parseFactor())
+        }
+        return x
+    }
+
+    private fun parseBase(): Double {
+        if (eat('+'.toInt())) return parseBase()
+        if (eat('-'.toInt())) return -parseBase()
+
+        var x: Double
+        val startPos = pos
+        if (eat('('.toInt())) {
+            x = parseExpression()
+            eat(')'.toInt())
+        } else if ((ch >= '0'.toInt() && ch <= '9'.toInt()) || ch == '.'.toInt()) {
+            while ((ch >= '0'.toInt() && ch <= '9'.toInt()) || ch == '.'.toInt()) nextChar()
+            x = input.substring(startPos, pos).toDouble()
+        } else if ((ch >= 'a'.toInt() && ch <= 'z'.toInt()) || (ch >= 'A'.toInt() && ch <= 'Z'.toInt())) {
+            while ((ch >= 'a'.toInt() && ch <= 'z'.toInt()) || (ch >= 'A'.toInt() && ch <= 'Z'.toInt())) nextChar()
+            val func = input.substring(startPos, pos)
+            x = parseBase()
+            x = when (func) {
+                "sqrt" -> {
+                    if (x < 0) throw IllegalArgumentException("Pierwiastek z liczby ujemnej")
+                    Math.sqrt(x)
+                }
+                "sin" -> Math.sin(Math.toRadians(x))
+                "cos" -> Math.cos(Math.toRadians(x))
+                "tan" -> Math.tan(Math.toRadians(x))
+                "ln" -> {
+                    if (x <= 0) throw IllegalArgumentException("Logarytm z liczby niedodatniej")
+                    Math.log(x)
+                }
+                else -> throw RuntimeException("Nieznana funkcja")
+            }
+        } else {
+            throw RuntimeException("Nieoczekiwany znak")
+        }
+        return x
     }
 }
